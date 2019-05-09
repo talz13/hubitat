@@ -11,6 +11,11 @@
 *		https://github.com/KristopherKubicki/smartapp-circadian-daylight/
 *
 *  Changelog:
+*	0.73 (May 09 2019)
+*		- Removed HSL/Color settings
+*		- Streamlined Brightness / ColorTemp calls
+*		- Added functionality to brighten / dim over specified period of time
+*
 *	0.72 (Apr 01 2019)
 *		- Added fix for sunset offset issues
 *		- Added zip code override
