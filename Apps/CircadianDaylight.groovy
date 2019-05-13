@@ -1,5 +1,5 @@
 /**
-*	Hubitat Circadian Daylight 0.72
+*	Hubitat Circadian Daylight 0.74
 *
 *	Author: 
 *		Adam Kempenich 
@@ -11,6 +11,10 @@
 *		https://github.com/KristopherKubicki/smartapp-circadian-daylight/
 *
 *  Changelog:
+*	0.74 (May 13 2019)
+*		- Added CT ramp times support
+*		- Removed ternary operators on required fields
+*
 *	0.73 (May 09 2019)
 *		- Removed HSL/Color settings
 *		- Streamlined Brightness / ColorTemp calls
@@ -72,11 +76,17 @@ preferences {
         input "maxBrightnessOverride","number", title: "Max Brightness Override", required: false
         input "minBrightnessOverride","number", title: "Min Brightness Override", required: false
     }
-    section("Time Before Sunrise / After Sunset to Brighten/Dim?") {
+    section("Time to Start Brightening / Dimming?") {
         input "brightenTimeStart", "time", title: "Start Brightening At", required: true
         input "brightenTimeEnd", "time", title: "End Brightening At", required: true
         input "dimTimeStart", "time", title: "Start Dimming At", required: true
         input "dimTimeEnd", "time", title: "End Dimming At", required: true
+    }
+    section("Time to start Cooling / Warming CT?") {
+        input "coolingTimeStart", "time", title: "Start Cooling At", required: true
+        input "coolingTimeEnd", "time", title: "End Cooling At", required: true
+        input "warmingTimeStart", "time", title: "Start Warming At", required: true
+        input "warmingTimeEnd", "time", title: "End Warming At", required: true
     }
 }
 
@@ -110,7 +120,16 @@ private def initialize() {
     scheduleTurnOn()
 }
 
-private def getSunriseTime(){
+private def getPercentageValue(startTime, endTime, minValue, maxValue, remain=False) {
+	 percentThrough = ((currentTime - startTime.time) / (endTime.time - startTime.time))
+	 if (remain) {
+	 	percentThrough = 1 - percentThrough
+	 }
+	 
+	 return (percentThrough * (maxValue - minValue)) + minValue
+}
+
+private def getSunriseTime() {
 	def sunRiseSet 
 	def sunriseTime
 	
@@ -146,10 +165,10 @@ def scheduleTurnOn() {
     
     // get sunrise and sunset times
     def sunriseTime = getSunriseTime()
-    log.debug("sunrise time ${sunriseTime}")
+    // log.debug("sunrise time ${sunriseTime}")
 	
     def sunsetTime = getSunsetTime()
-    log.debug("sunset time ${sunsetTime}")
+    // log.debug("sunset time ${sunsetTime}")
     
     if(sunriseTime > sunsetTime) {
         sunriseTime = new Date(sunriseTime - (24 * 60 * 60 * 1000))
@@ -165,7 +184,7 @@ def scheduleTurnOn() {
         }
     }
     
-	log.debug "checking... ${runTime.time} : $runTime. state.nextTime is ${state.nextTime}"
+	// log.debug "checking... ${runTime.time} : $runTime. state.nextTime is ${state.nextTime}"
     if(state.nextTime != runTime.time) {
         state.nextTime = runTime.time
         log.debug "Scheduling next step at: $runTime (sunset is $sunsetTime) :: ${state.nextTime}"
@@ -176,21 +195,19 @@ def scheduleTurnOn() {
 
 // Poll all bulbs, and modify the ones that differ from the expected state
 def modeHandler(evt) {
-    log.debug "modeHandler called"
+    // log.debug "modeHandler called"
     for (dswitch in dswitches) {
         if(dswitch.currentSwitch == "on") {
             return
         }
     }
     
-    log.debug "modeHandler getGraduatedBrightness()"
-    def ctb = getGraduatedBrightness()
-
-    def ct = ctb.colorTemp
-    def bright = ctb.brightness
+    // log.debug "modeHandler getGraduatedBrightness()"
+    def bright = getGraduatedBrightness()
+    def ct = getGraduatedCT()
     
     for(ctbulb in ctbulbs) {
-        log.debug "modeHandler ctbulb in ctbulbs"
+        // log.debug "modeHandler ctbulb in ctbulbs"
         if(ctbulb.currentValue("switch") == "on") {
             if((settings.dbright == true || location.mode in settings.smodes) && ctbulb.currentValue("level") != bright) {
                 ctbulb.setLevel(bright)
@@ -202,7 +219,7 @@ def modeHandler(evt) {
     }
     // def color = [hex: hex, hue: hsv.h, saturation: hsv.s, level: bright]
     for(dimmer in dimmers) {
-        log.debug "modeHandler dimmer in dimmers"
+        // log.debug "modeHandler dimmer in dimmers"
         if(dimmer.currentValue("switch") == "on") {
         	if(dimmer.currentValue("level") != bright) {
             	dimmer.setLevel(bright)
@@ -214,69 +231,95 @@ def modeHandler(evt) {
     scheduleTurnOn()
 }
 
-def getGraduatedBrightness() {
-    // log.debug "Calling getGraduatedBrightness"
-    def brightenStart = settings.brightenTimeStart == null || settings.brightenTimeStart == "" ? getSunriseTime() : Date.parse("yyyy-MM-dd'T'HH:mm:ss.SSSZ", settings.brightenTimeStart)
-    def brightenEnd = settings.brightenTimeEnd == null || settings.brightenTimeEnd == "" ? getSunriseTime() : Date.parse("yyyy-MM-dd'T'HH:mm:ss.SSSZ", settings.brightenTimeEnd)
-    def dimStart = settings.dimTimeStart == null || settings.dimTimeStart == "" ? getSunsetTime() : Date.parse("yyyy-MM-dd'T'HH:mm:ss.SSSZ", settings.dimTimeStart)
-    def dimEnd = settings.dimTimeEnd == null || settings.dimTimeEnd == "" ? getSunsetTime() : Date.parse("yyyy-MM-dd'T'HH:mm:ss.SSSZ", settings.dimTimeEnd)
-
-    def int maxBrightness = settings.maxBrightnessOverride == null || settings.maxBrightnessOverride == "" ? 100 : settings.maxBrightnessOverride
-    def int minBrightness = settings.minBrightnessOverride == null || settings.minBrightnessOverride == "" ? 1 : settings.minBrightnessOverride
-    def int brightnessRange = maxBrightness - minBrightness
-
+def getGraduatedCT() {
+	def coolingStart = Date.parse("yyyy-MM-dd'T'HH:mm:ss.SSSZ", settings.coolingTimeStart)
+    def coolingEnd = Date.parse("yyyy-MM-dd'T'HH:mm:ss.SSSZ", settings.coolingTimeEnd)
+    def warmingStart = Date.parse("yyyy-MM-dd'T'HH:mm:ss.SSSZ", settings.warmingTimeStart)
+    def warmingEnd = Date.parse("yyyy-MM-dd'T'HH:mm:ss.SSSZ", settings.warmingTimeEnd)
+    
     def int colorTemp = settings.coldCTOverride == null || settings.coldCTOverride == "" ? 2700 : settings.coldCTOverride
 	def int coldCT = settings.coldCTOverride == null || settings.coldCTOverride == "" ? 6500 : settings.coldCTOverride
 	def int warmCT = settings.warmCTOverride == null || settings.warmCTOverride == "" ? 2700 : settings.warmCTOverride
-    def int ctRange = coldCT - warmCT
+
+    def currentTime = now()
+
+    if (currentTime < coolingStart.time) {
+        // log.debug "currentTime before coolingStart!"
+        colorTemp = warmCT
+    }
+    else if (currentTime >= coolingStart.time && currentTime <= coolingEnd.time) {
+        // log.debug "currentTime between coolingStart and coolingEnd!"
+        colorTemp = getPercentageValue(coolingStart, coolingEnd, coldCT, warmCT)
+    }
+    else if (currentTime > coolingEnd.time && currentTime < warmingStart.time) {
+        // log.debug "currentTime between coolingEnd and warmingStart!"
+        colorTemp = coldCT
+    }
+    else if (currentTime >= warmingStart.time && currentTime <= warmingEnd.time) {
+        // log.debug "currentTime between warmingStart and warmingEnd!"
+	    colorTemp = getPercentageValue(warmingStart, warmingEnd, coldCT, warmCT, True)
+    }
+    else if (currentTime > warmingEnd.time) {
+        // log.debug "currentTime after warmingEnd!"
+        colorTemp = warmCT
+    }
+    else {
+        log.error "currentTime didn't fit into any CT bucket!"
+    }
+
+    log.debug "setting colorTemp variable!"
+    log.debug "ct: $colorTemp"
+    return colorTemp
+}
+
+def getGraduatedBrightness() {
+    // log.debug "Calling getGraduatedBrightness"
+    def brightenStart = Date.parse("yyyy-MM-dd'T'HH:mm:ss.SSSZ", settings.brightenTimeStart)
+    def brightenEnd = Date.parse("yyyy-MM-dd'T'HH:mm:ss.SSSZ", settings.brightenTimeEnd)
+    def dimStart = Date.parse("yyyy-MM-dd'T'HH:mm:ss.SSSZ", settings.dimTimeStart)
+    def dimEnd = Date.parse("yyyy-MM-dd'T'HH:mm:ss.SSSZ", settings.dimTimeEnd)
+
+    def int maxBrightness = settings.maxBrightnessOverride == null || settings.maxBrightnessOverride == "" ? 100 : settings.maxBrightnessOverride
+    def int minBrightness = settings.minBrightnessOverride == null || settings.minBrightnessOverride == "" ? 1 : settings.minBrightnessOverride
+    // def int brightnessRange = maxBrightness - minBrightness
 
     def brightness = 100
 
     def currentTime = now()
     // log.debug "currentTime: $currentTime, brightenStart: $brightenStart, brightenEnd: $brightenEnd, dimStart: $dimStart, dimEnd: $dimEnd"
 
-    log.debug "checking location.mode in settings.smodes"
+    // log.debug "checking location.mode in settings.smodes"
     if (location.mode in settings.smodes) {
         log.debug "in a sleep mode!"
         brightness = 1
-        colorTemp = warmCT
     }
 
     if (currentTime < brightenStart.time) {
-        log.debug "currentTime before brightenStart!"
+        // log.debug "currentTime before brightenStart!"
         brightness = minBrightness
-        colorTemp = warmCT
     }
     else if (currentTime >= brightenStart.time && currentTime <= brightenEnd.time) {
-        log.debug "currentTime between brightenStart and brightenEnd!"
-        percentThrough = ((currentTime - brightenStart.time) / (brightenEnd.time - brightenStart.time))
-        brightness = (percentThrough * brightnessRange) + minBrightness
-        colorTemp = (percentThrough * ctRange) + warmCT
+        // log.debug "currentTime between brightenStart and brightenEnd!"
+	    brightness = getPercentageValue(brightenStart, brightenEnd, minBrightness, maxBrightness)
     }
     else if (currentTime > brightenEnd.time && currentTime < dimStart.time) {
-        log.debug "currentTime between brightenEnd and dimStart!"
+        // log.debug "currentTime between brightenEnd and dimStart!"
         brightness = maxBrightness
-        colorTemp = coldCT
     }
     else if (currentTime >= dimStart.time && currentTime <= dimEnd.time) {
-        log.debug "currentTime between dimStart and dimEnd!"
-        percentRemaining = 1 - ((currentTime - dimStart.time) / (dimEnd.time - dimStart.time))
-        brightness = (percentRemaining * brightnessRange) + minBrightness
-        colorTemp = (percentRemaining * ctRange) + warmCT
+        // log.debug "currentTime between dimStart and dimEnd!"
+    	brightness = getPercentageValue(dimStart, dimEnd, minBrightness, maxBrightness, True)
     }
     else if (currentTime > dimEnd.time) {
-        log.debug "currentTime after dimEnd!"
+        // log.debug "currentTime after dimEnd!"
         brightness = minBrightness
-        colorTemp = warmCT
     }
     else {
-        log.error "currentTime didn't fit into any bucket!"
+        log.error "currentTime didn't fit into any brightness bucket!"
     }
 
-    // log.debug "setting ctb variable!"
-    def ctb = [:]
-    ctb = [colorTemp: colorTemp, brightness: Math.round(brightness)]
-    log.debug "ctb: $ctb"
+    // log.debug "setting brightness variable!"
+    log.debug "brightness: $brightness"
     // log.debug "Ending getGraduatedBrightness!"
-    return ctb
+    return brightness
 }
