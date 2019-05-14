@@ -13,6 +13,8 @@
 *  Changelog:
 *	0.75 (May 14 2019)
 *		- Fixed warmCT / coldCT order on percentage function call
+*		- Added configurable refresh interval setting
+*		- Added randomization to scheudling seconds to spread out multiple instances executing
 *		- Only call getGraduatedCT if there is a CT bulb to set
 *		- Fixed getPercentageValue function to use "now()" instead of setting currentTime variable once
 *		- Cleaned up more logging and changed leading spaces to tabs for indentation
@@ -94,6 +96,9 @@ preferences {
 		input "warmingTimeStart", "time", title: "Start Warming At", required: true
 		input "warmingTimeEnd", "time", title: "End Warming At", required: true
 	}
+	section("Refresh interval?") {
+		input "refreshInterval", "number", title: "How often to refresh the brightness / CT state? (Default 10 minutes)", required: false
+	}
 }
 
 def installed() {
@@ -110,6 +115,7 @@ def updated() {
 
 private def initialize() {
 	log.debug("initialize() with settings: ${settings}")
+	def randomSecs = Math.abs(new Random().nextInt() % 60)
 	if(ctbulbs) { subscribe(ctbulbs, "switch.on", modeHandler) }
 	if(dimmers) { subscribe(dimmers, "switch.on", modeHandler) }
 	if(dswitches) { subscribe(dswitches, "switch.off", modeHandler) }
@@ -118,8 +124,11 @@ private def initialize() {
 	// revamped for sunset handling instead of motion events
 	subscribe(location, "sunset", modeHandler)
 	subscribe(location, "sunrise", modeHandler)
-	// schedule("0 */15 * * * ?", modeHandler)
-	schedule("0 */5 * * * ?", modeHandler)
+	refreshInterval = settings.refreshInterval == null || settings.refreshInterval == "" ? 10 : settings.refreshInterval
+	log.debug "refreshInterval: $refreshInterval"
+	def scheduleStr = "$randomSecs */$refreshInterval * * * ?"
+	log.debug "scheduleStr: $scheduleStr"
+	schedule(scheduleStr, modeHandler)
 	subscribe(app,modeHandler)
 	subscribe(location, "sunsetTime", scheduleTurnOn)
 	// rather than schedule a cron entry, fire a status update a little bit in the future recursively
@@ -128,10 +137,12 @@ private def initialize() {
 
 private def getPercentageValue(startTime, endTime, minValue, maxValue, remain=False) {
 	 percentThrough = ((now() - startTime.time) / (endTime.time - startTime.time))
+	log.debug "orig percentThrough: $percentThrough"
 	 if (remain) {
+		 log.debug "remain is true!"
 	 	percentThrough = 1 - percentThrough
 	 }
-	 
+	 log.debug "percentThrough: $percentThrough"
 	 return (percentThrough * (maxValue - minValue)) + minValue
 }
 
