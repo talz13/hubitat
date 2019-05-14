@@ -260,7 +260,7 @@ def getGraduatedCT() {
 	}
 	else if (currentTime >= coolingStart.time && currentTime <= coolingEnd.time) {
 		// log.debug "currentTime between coolingStart and coolingEnd!"
-		colorTemp = getPercentageValue(coolingStart, coolingEnd, coldCT, warmCT)
+		colorTemp = getPercentageValue(coolingStart, coolingEnd, warmCT, coldCT)
 	}
 	else if (currentTime > coolingEnd.time && currentTime < warmingStart.time) {
 		// log.debug "currentTime between coolingEnd and warmingStart!"
@@ -268,7 +268,7 @@ def getGraduatedCT() {
 	}
 	else if (currentTime >= warmingStart.time && currentTime <= warmingEnd.time) {
 		// log.debug "currentTime between warmingStart and warmingEnd!"
-		colorTemp = getPercentageValue(warmingStart, warmingEnd, coldCT, warmCT, True)
+		colorTemp = getPercentageValue(warmingStart, warmingEnd, warmCT, coldCT, True)
 	}
 	else if (currentTime > warmingEnd.time) {
 		// log.debug "currentTime after warmingEnd!"
