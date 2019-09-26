@@ -1,5 +1,5 @@
 /**
-*	Hubitat Circadian Daylight 0.76
+*	Hubitat Circadian Daylight 0.77
 *
 *	Author: 
 *		Adam Kempenich 
@@ -11,6 +11,11 @@
 *		https://github.com/KristopherKubicki/smartapp-circadian-daylight/
 *
 *  Changelog:
+*	0.77 (Sep 26 2019)
+*		- Removed sunrise/sunset code
+*		- Added ability to turn on/off debug logging
+*		- Made Color Temperature time fields optional
+*		- Other stuff...
 *	0.76 (Sep 26 2019)
 *		- Backed up all changes to my local Hubitat developed code
 *	0.75 (May 14 2019)
@@ -20,25 +25,6 @@
 *		- Only call getGraduatedCT if there is a CT bulb to set
 *		- Fixed getPercentageValue function to use "now()" instead of setting currentTime variable once
 *		- Cleaned up more logging and changed leading spaces to tabs for indentation
-*
-*	0.74 (May 13 2019)
-*		- Added CT ramp times support
-*		- Removed ternary operators on required fields
-*
-*	0.73 (May 09 2019)
-*		- Removed HSL/Color settings
-*		- Streamlined Brightness / ColorTemp calls
-*		- Added functionality to brighten / dim over specified period of time
-*
-*	0.72 (Apr 01 2019)
-*		- Added fix for sunset offset issues
-*		- Added zip code override
-*
-*	0.71 (Mar 29 2019) 
-*		- Added fix for modes and switches not overriding
-*
-*	0.70 (Mar 28 2019) 
-*		- Initial (official) release
 *
 * 	To-Do:
 *		- Add number verification
@@ -58,29 +44,25 @@ definition(
 )
 
 preferences {
-	section("Thank you for installing Circadian Daylight! This application dims and adjusts the color temperature of your lights to match the state of the sun, which has been proven to aid in cognitive functions and restfulness. The default options are well suited for most users, but feel free to tweak accordingly!") {
+	section("Thank you for installing Circadian Daylight! This application dims and adjusts the color temperature of your lights to match the state of the day, which has been proven to aid in cognitive functions and restfulness. The default options are well suited for most users, but feel free to tweak accordingly!") {
 	}
 	section("Control these bulbs; Select each bulb only once") {
 		input "ctbulbs", "capability.colorTemperature", title: "Which Temperature Changing Bulbs?", multiple:true, required: false
 		input "dimmers", "capability.switchLevel", title: "Which Dimmers?", multiple:true, required: false
 	}
-	section("What are your 'Sleep' modes? The modes you pick here will dim your lights and filter light to a softer, yellower hue to help you fall asleep easier. Protip: You can pick 'Nap' modes as well!") {
-		input "smodes", "mode", title: "What are your Sleep modes?", multiple:true, required: false
-	}
-	section("Only run in these modes?") {
+    section("Active in these modes?") {
 		input "activeModes", "mode", title: "Which modes do you want this app enabled for?", multiple:true, required: false
 	}
-	section("Override Constant Brightness (default) with Dynamic Brightness? If you'd like your lights to dim as the sun goes down, override this option. Most people don't like it, but it can look good in some settings.") {
+	section("What are your 'Sleep' modes? The modes you pick here will dim your lights and filter light to a softer, yellower hue to help you fall asleep easier. These modes MUST be included in the active modes above. Protip: You can pick 'Nap' modes as well!") {
+		input "smodes", "mode", title: "What are your Sleep modes?", multiple:true, required: false
+	}
+	section("Override Constant Brightness (default) with Dynamic Brightness? If you'd like your lights to dim with the evening, override this option. Most people don't like it, but it can look good in some settings.") {
 		input "dbright","bool", title: "On or off?", required: false
 	}
 	section("Disable Circadian Daylight when the following switches are on:") {
 		input "dswitches","capability.switch", title: "Switches", multiple:true, required: false
 	}
 
-	section("Sunset/sunrise Overrides") {
-		input "sunriseOverride", "time", title: "Sunrise Override", required: false
-		input "sunsetOverride", "time", title: "Sunset Override", required: false
-	}
 	section("Color Temperature Overrides"){
 		input "coldCTOverride", "number", title: "Cold White Temperature", required: false
 		input "warmCTOverride", "number", title: "Warm White Temperature", required: false
@@ -96,13 +78,16 @@ preferences {
 		input "dimTimeEnd", "time", title: "End Dimming At", required: true
 	}
 	section("Time to start Cooling / Warming CT?") {
-		input "coolingTimeStart", "time", title: "Start Cooling At", required: true
-		input "coolingTimeEnd", "time", title: "End Cooling At", required: true
-		input "warmingTimeStart", "time", title: "Start Warming At", required: true
-		input "warmingTimeEnd", "time", title: "End Warming At", required: true
+		input "coolingTimeStart", "time", title: "Start Cooling At", required: false
+		input "coolingTimeEnd", "time", title: "End Cooling At", required: false
+		input "warmingTimeStart", "time", title: "Start Warming At", required: false
+		input "warmingTimeEnd", "time", title: "End Warming At", required: false
 	}
 	section("Refresh interval?") {
 		input "refreshInterval", "number", title: "How often to refresh the brightness / CT state? (Default 10 minutes)", required: false
+	}
+	section("Enable Debug Logging?") {
+		input "debugLogEnabled", "bool", title: "On or off?", required: false
 	}
 }
 
@@ -118,24 +103,26 @@ def updated() {
 	initialize()
 }
 
+def logDebug(logString) {
+    if (debugLogEnabled) {
+        log.debug(logString)
+    }
+}
+
 private def initialize() {
-	log.debug("initialize() with settings: ${settings}")
+	logDebug("initialize() with settings: ${settings}")
 	def randomSecs = Math.abs(new Random().nextInt() % 60)
 	if(ctbulbs) { subscribe(ctbulbs, "switch.on", modeHandler) }
 	if(dimmers) { subscribe(dimmers, "switch.on", modeHandler) }
 	if(dswitches) { subscribe(dswitches, "switch.off", modeHandler) }
 	subscribe(location, "mode", modeHandler)
 	
-	// revamped for sunset handling instead of motion events
-	subscribe(location, "sunset", modeHandler)
-	subscribe(location, "sunrise", modeHandler)
 	refreshInterval = settings.refreshInterval == null || settings.refreshInterval == "" ? 10 : settings.refreshInterval
-	log.debug "refreshInterval: $refreshInterval"
+	logDebug("refreshInterval: $refreshInterval")
 	def scheduleStr = "$randomSecs */$refreshInterval * * * ?"
-	log.debug "scheduleStr: $scheduleStr"
+	logDebug("scheduleStr: $scheduleStr")
 	schedule(scheduleStr, modeHandler)
 	subscribe(app,modeHandler)
-	subscribe(location, "sunsetTime", scheduleTurnOn)
 	// rather than schedule a cron entry, fire a status update a little bit in the future recursively
 	scheduleTurnOn()
 }
@@ -152,65 +139,15 @@ private def getPercentageValue(startTime, endTime, minValue, maxValue, remain) {
 	 return (percentThrough * (maxValue - minValue)) + minValue
 }
 
-private def getSunriseTime() {
-	def sunRiseSet 
-	def sunriseTime
-	
-	sunRiseSet = getSunriseAndSunset()
-	if(settings.sunriseOverride != null && settings.sunriseOverride != ""){
-		 sunriseTime = new Date().parse("yyyy-MM-dd'T'HH:mm:ss.SSSZ", settings.sunriseOverride)
-	}
-	else if(settings.sunriseOffset != null && settings.sunriseOffset != ""){
-		sunriseTime = sunRiseSet.sunrise.plusMinutes(settings.sunriseOffset)
-	}
-	else{
-		sunriseTime = sunRiseSet.sunrise
-	}
-	return sunriseTime
-}
-
-private def getSunsetTime(){
-	def sunRiseSet 
-	def sunsetTime
-	
-	sunRiseSet = getSunriseAndSunset()
-	if(settings.sunsetOverride != null && settings.sunsetOverride != ""){
-		sunsetTime = new Date().parse("yyyy-MM-dd'T'HH:mm:ss.SSSZ", settings.sunsetOverride)
-	}
-	else{
-		sunsetTime = sunRiseSet.sunset
-	}
-	return sunsetTime
-}
-
 def scheduleTurnOn() {
 	def int iterRate = 20
 	
-	// get sunrise and sunset times
-	def sunriseTime = getSunriseTime()
-	// log.debug("sunrise time ${sunriseTime}")
-	
-	def sunsetTime = getSunsetTime()
-	// log.debug("sunset time ${sunsetTime}")
-	
-	if(sunriseTime > sunsetTime) {
-		sunriseTime = new Date(sunriseTime - (24 * 60 * 60 * 1000))
-	}
-	
 	def runTime = new Date(now() + 60*15*1000)
-	for (def i = 0; i < iterRate; i++) {
-		def long uts = sunriseTime.time + (i * ((sunsetTime.time - sunriseTime.time) / iterRate))
-		def timeBeforeSunset = new Date(uts)
-		if(timeBeforeSunset.time > now()) {
-			runTime = timeBeforeSunset
-			last
-		}
-	}
 	
 	// log.debug "checking... ${runTime.time} : $runTime. state.nextTime is ${state.nextTime}"
 	if(state.nextTime != runTime.time) {
 		state.nextTime = runTime.time
-		log.debug "Scheduling next step at: $runTime (sunset is $sunsetTime) :: ${state.nextTime}"
+		logDebug("Scheduling next step at: $runTime :: ${state.nextTime}")
 		runOnce(runTime, modeHandler)
 	}
 }
@@ -233,12 +170,12 @@ def modeHandler(evt) {
 	
 	// log.debug "modeHandler getGraduatedBrightness()"
 	def bright = getGraduatedBrightness()
-	log.debug "bright: $bright"
+	logDebug("bright: $bright")
 	def ct = null
 	
-	if (ctbulbs != null && ctbulbs.size() > 0) {
+	if (ctbulbs != null && ctbulbs.size() > 0 && checkIfCtUsed()) {
 		ct = getGraduatedCT()
-		log.debug "ct: $ct"
+		logDebug("ct: $ct")
 	}
 	
 	for(ctbulb in ctbulbs) {
@@ -265,15 +202,27 @@ def modeHandler(evt) {
 	scheduleTurnOn()
 }
 
+def checkIfCtUsed() {
+    if (settings.coolingTimeStart != null && settings.coolingTimeStart != ""
+        && settings.coolingTimeEnd != null && settings.coolingTimeEnd != ""
+        && settings.warmingTimeStart != null && settings.warmingTimeStart != ""
+        && settings.warmingTimeEnd != null && settings.warmingTimeEnd != ""
+        && settings.coolCTOverride != null && settings.coolCTOverride != ""
+        && settings.warmCTOverride != null && settings.warmCTOverride != "") {
+            return true
+        }
+        return false
+}
+
 def getGraduatedCT() {
 	def coolingStart = Date.parse("yyyy-MM-dd'T'HH:mm:ss.SSSZ", settings.coolingTimeStart)
 	def coolingEnd = Date.parse("yyyy-MM-dd'T'HH:mm:ss.SSSZ", settings.coolingTimeEnd)
 	def warmingStart = Date.parse("yyyy-MM-dd'T'HH:mm:ss.SSSZ", settings.warmingTimeStart)
 	def warmingEnd = Date.parse("yyyy-MM-dd'T'HH:mm:ss.SSSZ", settings.warmingTimeEnd)
 	
-	def int colorTemp = settings.coldCTOverride == null || settings.coldCTOverride == "" ? 2700 : settings.coldCTOverride
+	def int colorTemp = settings.coldCTOverride == null || settings.coldCTOverride == "" ? 2200 : settings.coldCTOverride
 	def int coldCT = settings.coldCTOverride == null || settings.coldCTOverride == "" ? 6500 : settings.coldCTOverride
-	def int warmCT = settings.warmCTOverride == null || settings.warmCTOverride == "" ? 2700 : settings.warmCTOverride
+	def int warmCT = settings.warmCTOverride == null || settings.warmCTOverride == "" ? 2200 : settings.warmCTOverride
 
 	def currentTime = now()
 
@@ -322,10 +271,9 @@ def getGraduatedBrightness() {
 
 	// log.debug "checking location.mode in settings.smodes"
 	if (location.mode in settings.smodes) {
-		log.debug "in a sleep mode!"
+		logDebug("in a sleep mode!")
 		brightness = 1
 	}
-
 	else if (currentTime < brightenStart.time) {
 		// log.debug "currentTime before brightenStart!"
 		brightness = minBrightness
@@ -339,7 +287,7 @@ def getGraduatedBrightness() {
 		brightness = maxBrightness
 	}
 	else if (currentTime >= dimStart.time && currentTime <= dimEnd.time) {
-		 log.debug "currentTime between dimStart and dimEnd!"
+		logDebug("currentTime between dimStart and dimEnd!")
 		brightness = getPercentageValue(dimStart, dimEnd, minBrightness, maxBrightness, true)
 	}
 	else if (currentTime > dimEnd.time) {
