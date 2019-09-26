@@ -1,5 +1,5 @@
 /**
-*	Hubitat Circadian Daylight 0.75
+*	Hubitat Circadian Daylight 0.76
 *
 *	Author: 
 *		Adam Kempenich 
@@ -11,6 +11,8 @@
 *		https://github.com/KristopherKubicki/smartapp-circadian-daylight/
 *
 *  Changelog:
+*	0.76 (Sep 26 2019)
+*		- Backed up all changes to my local Hubitat developed code
 *	0.75 (May 14 2019)
 *		- Fixed warmCT / coldCT order on percentage function call
 *		- Added configurable refresh interval setting
@@ -64,6 +66,9 @@ preferences {
 	}
 	section("What are your 'Sleep' modes? The modes you pick here will dim your lights and filter light to a softer, yellower hue to help you fall asleep easier. Protip: You can pick 'Nap' modes as well!") {
 		input "smodes", "mode", title: "What are your Sleep modes?", multiple:true, required: false
+	}
+	section("Only run in these modes?") {
+		input "activeModes", "mode", title: "Which modes do you want this app enabled for?", multiple:true, required: false
 	}
 	section("Override Constant Brightness (default) with Dynamic Brightness? If you'd like your lights to dim as the sun goes down, override this option. Most people don't like it, but it can look good in some settings.") {
 		input "dbright","bool", title: "On or off?", required: false
@@ -135,14 +140,15 @@ private def initialize() {
 	scheduleTurnOn()
 }
 
-private def getPercentageValue(startTime, endTime, minValue, maxValue, remain=False) {
+private def getPercentageValue(startTime, endTime, minValue, maxValue, remain) {
 	 percentThrough = ((now() - startTime.time) / (endTime.time - startTime.time))
-	log.debug "orig percentThrough: $percentThrough"
+	// log.debug "remain: $remain"
+	// log.debug "orig percentThrough: $percentThrough"
 	 if (remain) {
-		 log.debug "remain is true!"
+		// log.debug "remain is true!"
 	 	percentThrough = 1 - percentThrough
 	 }
-	 log.debug "percentThrough: $percentThrough"
+	 // log.debug "percentThrough: $percentThrough"
 	 return (percentThrough * (maxValue - minValue)) + minValue
 }
 
@@ -218,6 +224,12 @@ def modeHandler(evt) {
 			return
 		}
 	}
+	// log.debug "Mode: $location.mode"
+	// log.debug "activeModes: ${settings.activeModes}"
+	if (settings.activeModes && !(location.mode in settings.activeModes)) {
+		// log.debug "Mode $location.mode not in activeModes ${settings.activeModes}, exiting."
+		return
+	}
 	
 	// log.debug "modeHandler getGraduatedBrightness()"
 	def bright = getGraduatedBrightness()
@@ -271,7 +283,7 @@ def getGraduatedCT() {
 	}
 	else if (currentTime >= coolingStart.time && currentTime <= coolingEnd.time) {
 		// log.debug "currentTime between coolingStart and coolingEnd!"
-		colorTemp = getPercentageValue(coolingStart, coolingEnd, warmCT, coldCT)
+		colorTemp = getPercentageValue(coolingStart, coolingEnd, warmCT, coldCT, false)
 	}
 	else if (currentTime > coolingEnd.time && currentTime < warmingStart.time) {
 		// log.debug "currentTime between coolingEnd and warmingStart!"
@@ -279,7 +291,7 @@ def getGraduatedCT() {
 	}
 	else if (currentTime >= warmingStart.time && currentTime <= warmingEnd.time) {
 		// log.debug "currentTime between warmingStart and warmingEnd!"
-		colorTemp = getPercentageValue(warmingStart, warmingEnd, warmCT, coldCT, True)
+		colorTemp = getPercentageValue(warmingStart, warmingEnd, warmCT, coldCT, true)
 	}
 	else if (currentTime > warmingEnd.time) {
 		// log.debug "currentTime after warmingEnd!"
@@ -314,21 +326,21 @@ def getGraduatedBrightness() {
 		brightness = 1
 	}
 
-	if (currentTime < brightenStart.time) {
+	else if (currentTime < brightenStart.time) {
 		// log.debug "currentTime before brightenStart!"
 		brightness = minBrightness
 	}
 	else if (currentTime >= brightenStart.time && currentTime <= brightenEnd.time) {
 		// log.debug "currentTime between brightenStart and brightenEnd!"
-		brightness = getPercentageValue(brightenStart, brightenEnd, minBrightness, maxBrightness)
+		brightness = getPercentageValue(brightenStart, brightenEnd, minBrightness, maxBrightness, false)
 	}
 	else if (currentTime > brightenEnd.time && currentTime < dimStart.time) {
 		// log.debug "currentTime between brightenEnd and dimStart!"
 		brightness = maxBrightness
 	}
 	else if (currentTime >= dimStart.time && currentTime <= dimEnd.time) {
-		// log.debug "currentTime between dimStart and dimEnd!"
-		brightness = getPercentageValue(dimStart, dimEnd, minBrightness, maxBrightness, True)
+		 log.debug "currentTime between dimStart and dimEnd!"
+		brightness = getPercentageValue(dimStart, dimEnd, minBrightness, maxBrightness, true)
 	}
 	else if (currentTime > dimEnd.time) {
 		// log.debug "currentTime after dimEnd!"
